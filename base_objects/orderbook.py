@@ -3,6 +3,8 @@ import queue
 import time
 from collections import defaultdict
 
+from numpy import negative
+
 class Side(enum.Enum):
     BUY = 0
     SELL = 1
@@ -27,9 +29,16 @@ class OrderBook(object):
         self.unprocessed_orders = queue.Queue()
         self.trades = queue.Queue()
         self.order_id = 0
+        self.trader_map = {
+            'A': [],
+            'B': [],
+            'C': [],
+            'D': []
+        }
 
-    def new_order_id(self):
+    def new_order_id(self, user: str):
         self.order_id += 1
+        self.trader_map[user].append(self.order_id)
         return self.order_id
 
     @property
@@ -49,7 +58,7 @@ class OrderBook(object):
     def process_order(self, incoming_order):
         """ Main processing function. If incoming_order matches delegate to process_match."""
         incoming_order.timestamp = get_timestamp()
-        incoming_order.order_id = self.new_order_id()
+        incoming_order.order_id = self.new_order_id(incoming_order.user_id)
         if incoming_order.side == Side.BUY:
             if incoming_order.price >= self.min_offer and self.offers:
                 self.process_match(incoming_order)
@@ -113,17 +122,34 @@ class OrderBook(object):
             print('{0}) Price={1}, Total units={2}'.format(i+1, self.bid_prices[i], self.bid_sizes[i]))
         print()
 
+    def calculate_fair_price(self, limits = 1):
+
+        self.book_summary()
+        positive_push = 0
+        for bid_price, bid_size in zip(self.bid_prices[:limits], self.bid_sizes[:limits]):
+            positive_push += bid_price*(0.0001)*bid_size
+        negative_push = 0
+        for offer_price, offer_size in zip(self.offer_prices[:limits], self.offer_sizes[:limits]):
+            negative_push += offer_price*(0.0001)*offer_size
+
+        impact = (positive_push - negative_push) / (sum(self.bid_sizes) + sum(self.offer_sizes))
+        
+        midprice = (self.min_offer + self.max_bid) / 2
+
+        return midprice + impact
+
 
 class Order(object):
-    def __init__(self, side, price, size, timestamp=None, order_id=None):
+    def __init__(self, side, price, size, timestamp=None, order_id=None, user_id=None):
         self.side = side
         self.price = price
         self.size = size
         self.timestamp = timestamp
         self.order_id = order_id
+        self.user_id = user_id
 
     def __repr__(self):
-        return '{0} {1} units at {2}'.format(self.side, self.size, self.price)
+        return '{0} {1} {2} units at {3}'.format(self.user_id, self.side, self.size, self.price)
 
     
 class Trade(object):
