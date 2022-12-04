@@ -28,25 +28,24 @@ class WashTrade:
                 consider_trades.append(trade)
                 
             edge = self.make_edge(trade)
-            self.add_edge(edge)
 
-            if self.cycle_length() > self.wt_thresh:
+            if self.cycle_length(trade) > self.wt_thresh:
 
                 print('Wash trading detected!')
 
 
     def make_edge(self, trade):
 
-        from_trader = ord(trade['from_trader'])
-        to_trader = ord(trade['to_trader'])
+        buy_account = ord(trade['buy_account'])
+        sell_account = ord(trade['sell_account'])
 
-        self.wash_graph.add_edge(from_trader, to_trader)
+        self.wash_graph.add_edge(buy_account, sell_account)
 
     def cycle_length(self, trade):
 
         cycles = sorted(simple_cycles(self.wash_graph))
         num_cycles = 0
         for cycle in cycles:
-            if trade['from_trader'] in self.wash_graph or trade['to_trader'] in cycle:
+            if trade['buy_account'] in self.wash_graph or trade['sell_account'] in cycle:
                 num_cycles += 1
         return num_cycles

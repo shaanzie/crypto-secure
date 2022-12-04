@@ -35,6 +35,7 @@ class Simulator(Logger):
 
         self.ramping.run_detection(old_orderbook, new_orderbook, order)
         self.momentum_ignition.run_detection(old_orderbook, new_orderbook, order)
+        
         self.wash_trade.run_detection(old_orderbook, new_orderbook, new_orderbook.trades)
         self.frontrunning.run_detection(old_orderbook, new_orderbook, order)
         

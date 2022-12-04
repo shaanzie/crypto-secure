@@ -15,13 +15,14 @@ class FrontRunning:
         # Thresholds
         self.frontrunning_interval = 50
         self.perceived_profit_threshold = 100
+        self.large_order_thresh = 50
 
     def run_detection(self, old_orderbook, new_orderbook, order):
 
         if self.is_large_order(new_orderbook, order):
             user_profits = self.calculate_profits(order)
-            for profit in user_profits:
-                if profit > self.perceived_profit_threshold:
+            for user in user_profits:
+                if user_profits[user] > self.perceived_profit_threshold:
                     print('Frontrunning detected!')
         
         if order['order_id'] % self.frontrunning_interval == 0:
@@ -36,9 +37,7 @@ class FrontRunning:
     
     def is_large_order(self, orderbook, order):
 
-        large_qty = 0.7*max(order['qty'] for order in orderbook.orders)
-
-        if order['qty'] > large_qty:
+        if order['qty'] > self.large_order_thresh:
             return True
         return False
 
