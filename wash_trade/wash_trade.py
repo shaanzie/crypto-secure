@@ -18,17 +18,21 @@ class WashTrade:
         self.wt_thresh = 4
         self.wash_window_threshold = 50
 
-    def run_detection(self, old_orderbook, new_orderbook, trade):
+    def run_detection(self, old_orderbook, new_orderbook, trades):
+        
+        self.wash_graph.clear()
 
-        if trade['trade_id'] % self.wash_window_threshold == 0:
-            self.wash_graph.clear()
+        consider_trades = []
+        for trade in trades:
+            if trade['order_id'] > new_orderbook.order_id - self.wash_window_threshold:
+                consider_trades.append(trade)
+                
+            edge = self.make_edge(trade)
+            self.add_edge(edge)
 
-        edge = self.make_edge(trade)
-        self.add_edge(edge)
+            if self.cycle_length() > self.wt_thresh:
 
-        if self.cycle_length() > self.wt_thresh:
-
-            print('Wash trading detected!')
+                print('Wash trading detected!')
 
 
     def make_edge(self, trade):

@@ -6,6 +6,8 @@ from base_objects.orderbook import OrderBook
 from base_objects.logger import Logger
 from ramping.ramping import Ramping
 from momentum_ignition.momentum_ignition import MomentumIgnition
+from wash_trade.wash_trade import WashTrade
+from frontrunning.frontrunning import FrontRunning
 
 class Simulator(Logger):
 
@@ -17,8 +19,8 @@ class Simulator(Logger):
 
         self.ramping = Ramping()
         self.momentum_ignition = MomentumIgnition()
-        # self.wash_trade = WashTrade()
-        # self.frontrunning = FrontRunning()
+        self.wash_trade = WashTrade()
+        self.frontrunning = FrontRunning()
 
         self.traders = [
             'A',
@@ -31,8 +33,10 @@ class Simulator(Logger):
 
     def run_detections(self, old_orderbook, new_orderbook, order):
 
-        # self.ramping.run_detection(old_orderbook, new_orderbook, order)
+        self.ramping.run_detection(old_orderbook, new_orderbook, order)
         self.momentum_ignition.run_detection(old_orderbook, new_orderbook, order)
+        self.wash_trade.run_detection(old_orderbook, new_orderbook, new_orderbook.trades)
+        self.frontrunning.run_detection(old_orderbook, new_orderbook, order)
         
 
     def make_market(

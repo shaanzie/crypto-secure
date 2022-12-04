@@ -3,7 +3,7 @@ from mimetypes import init
 from base_objects.logger import Logger
 from base_objects.orderbook import Order, OrderBook
 
-class MomentumIgnition:
+class FrontRunning:
 
     def __init__(self) -> None:
         
