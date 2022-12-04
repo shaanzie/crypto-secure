@@ -6,6 +6,7 @@ class Logger:
         
         super().__init__()
         self.logger = logging.getLogger(control_name)
+        self.logger.setLevel(logging.DEBUG)
         self.control_name = control_name
 
     def log_info(self, msg: str) -> None:

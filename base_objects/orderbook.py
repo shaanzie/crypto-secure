@@ -1,208 +1,158 @@
-import enum
-import queue
-import time
-from collections import defaultdict
+from io import StringIO
+from collections import deque, namedtuple
 
-from numpy import negative
+class Order:
+    def __init__(self, side, size, price, trader, order_id):
 
-class Side(enum.Enum):
-    BUY = 0
-    SELL = 1
-
-
-def get_timestamp():
-    """ Microsecond timestamp """
-    return int(1e6 * time.time())
-
+        self.side = side
+        self.size = size
+        self.price = price
+        self.trader = trader
+        self.order_id = order_id
 
 class OrderBook(object):
-    def __init__(self):
-        """ Orders stored as two defaultdicts of {price:[orders at price]}
-            Orders sent to OrderBook through OrderBook.unprocessed_orders queue
-        """
-        self.bid_prices = []
-        self.bid_sizes = []
-        self.offer_prices = []
-        self.offer_sizes = []
-        self.bids = defaultdict(list)
-        self.offers = defaultdict(list)
-        self.unprocessed_orders = queue.Queue()
-        self.trades = queue.Queue()
-        self.order_id = 0
-        self.trader_map = {
-            'A': [],
-            'B': [],
-            'C': [],
-            'D': []
-        }
+    def __init__(self, name, max_price=10000, start_order_id=0, cb=None):
 
-    def new_order_id(self, user: str):
-        self.order_id += 1
-        self.trader_map[user].append(self.order_id)
-        return self.order_id
-
-    @property
-    def max_bid(self):
-        if self.bids:
-            return max(self.bids.keys())
-        else:
-            return 0.
-
-    @property
-    def min_offer(self):
-        if self.offers:
-            return min(self.offers.keys())
-        else:
-            return float('inf')
-
-    def process_order(self, incoming_order):
-        """ Main processing function. If incoming_order matches delegate to process_match."""
-        incoming_order.timestamp = get_timestamp()
-        incoming_order.order_id = self.new_order_id(incoming_order.user_id)
-        if incoming_order.side == Side.BUY:
-            if incoming_order.price >= self.min_offer and self.offers:
-                self.process_match(incoming_order)
-            else:
-                self.bids[incoming_order.price].append(incoming_order)
-        else:
-            if incoming_order.price <= self.max_bid and self.bids:
-                self.process_match(incoming_order)
-            else:
-                self.offers[incoming_order.price].append(incoming_order)
-
-    def process_match(self, incoming_order):
-        """ Match an incoming order against orders on the other side of the book, in price-time priority."""
-        levels = self.bids if incoming_order.side == Side.SELL else self.offers
-        prices = sorted(levels.keys(), reverse=(incoming_order.side == Side.SELL))
-        def price_doesnt_match(book_price):
-            if incoming_order.side == Side.BUY:
-                return incoming_order.price < book_price
-            else:
-                return incoming_order.price > book_price
-        for (i, price) in enumerate(prices):
-            if (incoming_order.size == 0) or (price_doesnt_match(price)):
-                break
-            orders_at_level = levels[price]
-            for (j, book_order) in enumerate(orders_at_level):
-                if incoming_order.size == 0:
-                    break
-                trade = self.execute_match(incoming_order, book_order)
-                incoming_order.size = max(0, incoming_order.size-trade.size)
-                book_order.size = max(0, book_order.size-trade.size)
-                self.trades.put(trade)
-            levels[price] = [o for o in orders_at_level if o.size > 0]
-            if len(levels[price]) == 0:
-                levels.pop(price)
-        # If the incoming order has not been completely matched, add the remainder to the order book
-        if incoming_order.size > 0:
-            same_side = self.bids if incoming_order.side == Side.BUY else self.offers
-            same_side[incoming_order.price].append(incoming_order)
-
-    def execute_match(self, incoming_order, book_order):
-        trade_size = min(incoming_order.size, book_order.size)
-        return Trade(incoming_order.side, book_order.price, trade_size, incoming_order.order_id, book_order.order_id)
-
-    def book_summary(self):
-        self.bid_prices = sorted(self.bids.keys(), reverse=True)
-        self.offer_prices = sorted(self.offers.keys())
-        self.bid_sizes = [sum(o.size for o in self.bids[p]) for p in self.bid_prices]
-        self.offer_sizes = [sum(o.size for o in self.offers[p]) for p in self.offer_prices]
-
-    def show_book(self):
-        self.book_summary()
-        print('Sell side:')
-        if len(self.offer_prices) == 0:
-            print('EMPTY')
-        for i, price in reversed(list(enumerate(self.offer_prices))):
-            print('{0}) Price={1}, Total units={2}'.format(i+1, self.offer_prices[i], self.offer_sizes[i]))
-        print('Buy side:')
-        if len(self.bid_prices) == 0:
-            print('EMPTY')
-        for i, price in enumerate(self.bid_prices):
-            print('{0}) Price={1}, Total units={2}'.format(i+1, self.bid_prices[i], self.bid_sizes[i]))
-        print()
-
-    def calculate_fair_price(self, limits = 1):
-
-        self.book_summary()
-        positive_push = 0
-        for bid_price, bid_size in zip(self.bid_prices[:limits], self.bid_sizes[:limits]):
-            positive_push += bid_price*(0.0001)*bid_size
-        negative_push = 0
-        for offer_price, offer_size in zip(self.offer_prices[:limits], self.offer_sizes[:limits]):
-            negative_push += offer_price*(0.0001)*offer_size
-
-        impact = (positive_push - negative_push) / (sum(self.bid_sizes) + sum(self.offer_sizes))
+        self.name = name
+        self.order_id = start_order_id
+        self.max_price = max_price
+        #self.dec_places = dec_places
+        self.cb = cb or self.execute
+        self.price_points = [deque() for i in range(self.max_price)] 
+        self.bid_max = 0
+        self.ask_min = max_price + 1
+        self.orders = {} # orderid -> Order
+        self.trades = []
         
-        midprice = (self.min_offer + self.max_bid) / 2
+    def execute(self, trader_buy, trader_sell, price, size):
+        self.trades.append({
+            'buy_account': trader_buy,
+            'sell_account': trader_sell,
+            'qty': size,
+            'price': price,
+            'order_id': self.order_id
+        })
+        print("EXECUTE: %s BUY %s SELL %s %s @ %d" % (trader_buy, trader_sell, size, self.name, price))
+        
+    def limit_order(self, side, size, price, trader):
+        self.order_id += 1
+        if type(price) != int:
+            raise ValueError("expected price as int (ticks)")
+        #if type(price) == float:
+        #    price = int(price * (10**self.dec_places))
+        if side == 0: # buy order
+            # look for outstanding sell orders that cross with the incoming order
+            while price >= self.ask_min:
+                entries = self.price_points[self.ask_min]
+                while entries:
+                    entry = entries[0]
+                    if entry.size < size:
+                        self.cb(trader, entry.trader, price, entry.size)
+                        size -= entry.size
+                        entries.popleft()
+                    else:
+                        self.cb(trader, entry.trader, price, size)
+                        if entry.size > size:
+                            entry.size -= size
+                        else:
+                            entries.popleft()
+                        self.order_id += 1
+                        return self.order_id
+                        
+                # we have exhausted all orders at the ask_min price point. Move on
+                # to the next price level
+                self.ask_min += 1
 
-        return midprice + impact
+            # if we get here then there is some qty we can't fill, so enqueue the order
+            self.order_id += 1
+            #order.id = self.order_id
+            self.price_points[price].append(Order(side, size, price, trader, self.order_id))
+            if self.bid_max < price:
+                self.bid_max = price
+            return self.order_id
 
+        else: # sell order
+            # look for outstanding buy orders that cross with the incoming order
+            while price <= self.bid_max:
+                entries = self.price_points[self.bid_max]
+                while entries:
+                    entry = entries[0]
+                    if entry.size < size:
+                        self.cb(entry.trader, trader, price, entry.size)
+                        size -= entry.size
+                        entries.popleft()
+                    else:
+                        self.cb(entry.trader, trader, price, size)
+                        if entry.size > size:
+                            entry.size -= size
+                        else:
+                            # entry.size == size
+                            entries.popleft()
+                        self.order_id += 1
+                        #id = self.order_id
+                        return self.order_id
+                        
+                # we have exhausted all orders at the ask_min price point. Move on
+                # to the next price level
+                self.bid_max -= 1
 
-class Order(object):
-    def __init__(self, side, price, size, timestamp=None, order_id=None, user_id=None):
-        self.side = side
-        self.price = price
-        self.size = size
-        self.timestamp = timestamp
-        self.order_id = order_id
-        self.user_id = user_id
+            # if we get here then there is some qty we can't fill, so enqueue the order
+            self.order_id += 1
+            #order.id = self.order_id
+            self.price_points[price].append(Order(side, size, price, trader, self.order_id))
+            if self.ask_min > price:
+                self.ask_min = price
+            return self.order_id	    
+            
+    def _render_level(self, level, maxlen=40):
+        ret = ",".join(("%s:%s(%s)" % (order.size, order.trader, order.order_id) for order in level))
+        if len(ret) > maxlen:
+            ret = ",".join((str(order.size) for order in level))
+        if len(ret) > maxlen:
+            ret = "%d orders (total size %d)" % (len(level), sum((order.size for order in level)))
+            assert len(ret) <= maxlen
+        return ret
+        
+    def render(self):
+        output = StringIO()
+        output.write(("-"*110)+"\r\n")
+        output.write("Buyers".center(55) + " | " + "Sellers".center(55) + "\r\n")
+        output.write(("-"*110)+"\r\n")
+        for price in range(self.max_price-1, 0, -1):
+            level = self.price_points[price]
+            if level:
+                if price >= self.ask_min:
+                    left_price = ""
+                    left_orders = ""
+                    right_price = str(price)
+                    right_orders = self._render_level(level)
+                else:
+                    left_price = str(price) 
+                    left_orders = self._render_level(level)
+                    right_price = ""
+                    right_orders = ""
+                output.write(left_orders.rjust(43))
+                output.write(" |")
+                output.write(left_price.rjust(10))
+                output.write(" | ")
+                output.write(right_price.rjust(10))
+                output.write("| ")
+                output.write(right_orders.ljust(43))
+                output.write("\r\n"+("-"*110)+"\r\n")
+        return output.getvalue()
 
-    def __repr__(self):
-        return '{0} {1} {2} units at {3}'.format(self.user_id, self.side, self.size, self.price)
+    def calculate_fair_price(self):
 
-    
-class Trade(object):
-    def __init__(self, incoming_side, incoming_price, trade_size, incoming_order_id, book_order_id):
-        self.side = incoming_side
-        self.price = incoming_price
-        self.size = trade_size
-        self.incoming_order_id = incoming_order_id
-        self.book_order_id = book_order_id
+        fair_price = 0
+        midprice = (self.ask_min + self.bid_max) / 2
+        vol = 0
+        
+        for price in range(self.max_price-1, 0, -1):
+            level = self.price_points[price]
+            for order in level:
 
-    def __repr__(self):
-        return 'Executed: {0} {1} units at {2}'.format(self.side, self.size, self.price)
-
-
-if __name__ == '__main__':
-    print('Example 1:')
-    ob = OrderBook()
-    orders = [Order(Side.BUY, 1., 2),
-            Order(Side.BUY, 2., 3, 2),
-            Order(Side.BUY, 1., 4, 3)]
-    print('We receive these orders:')
-    for order in orders:
-        print(order)
-        ob.unprocessed_orders.put(order)
-    while not ob.unprocessed_orders.empty():
-        ob.process_order(ob.unprocessed_orders.get())
-    print()
-    print('Resulting order book:')
-    ob.show_book()
-
-    print('Example 2:')
-    ob = OrderBook()
-    orders = [Order(Side.BUY, 12.23, 10),
-            Order(Side.BUY, 12.31, 20),
-            Order(Side.SELL, 13.55, 5),
-            Order(Side.BUY, 12.23, 5),
-            Order(Side.BUY, 12.25, 15),
-            Order(Side.SELL, 13.31, 5),
-            Order(Side.BUY, 12.25, 30),
-            Order(Side.SELL, 13.31, 5)]
-    print('We receive these orders:')
-    for order in orders:
-        print(order)
-        ob.unprocessed_orders.put(order)
-    while not ob.unprocessed_orders.empty():
-        ob.process_order(ob.unprocessed_orders.get())
-    print()
-    print('Resulting order book:')
-    ob.show_book()
-
-    offer_order = Order(Side.SELL, 12.25, 100)
-    print('Now we get a sell order {}'.format(offer_order))
-    print('This removes the first two buy orders and creates a new price level on the sell side')
-    ob.unprocessed_orders.put(offer_order)
-    ob.process_order(ob.unprocessed_orders.get())
-    ob.show_book()
+                deficit = midprice - order.price
+                fair_price += order.price * order.size
+                vol += order.size
+        
+        return fair_price / vol

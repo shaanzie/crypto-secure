@@ -1,79 +1,123 @@
-from base_objects.orderbook import OrderBook, Order, Side
-from base_objects.logger import Logger
+import random
+import time
+from copy import deepcopy
 
-class Simulator:
+from base_objects.orderbook import OrderBook
+from base_objects.logger import Logger
+from ramping.ramping import Ramping
+from momentum_ignition.momentum_ignition import MomentumIgnition
+
+class Simulator(Logger):
 
     def __init__(self) -> None:
         
-        super().__init__()
+        super().__init__(control_name='SIMULATOR')
 
-        self.logger = Logger('SIMULATOR')
-        self.orderbook = OrderBook()
+        self.orderbook = OrderBook('BTC')
 
-    def run_detection(self):
+        self.ramping = Ramping()
+        self.momentum_ignition = MomentumIgnition()
+        # self.wash_trade = WashTrade()
+        # self.frontrunning = FrontRunning()
 
-        pass
+        self.traders = [
+            'A',
+            'B',
+            'C',
+            'D',
+            'E',
+            'F'
+        ]
 
-    def convert_to_order(self, order_str: str) -> Order:
+    def run_detections(self, old_orderbook, new_orderbook, order):
+
+        # self.ramping.run_detection(old_orderbook, new_orderbook, order)
+        self.momentum_ignition.run_detection(old_orderbook, new_orderbook, order)
         
-        order_dets = order_str.split(' ')
 
-        return Order(
-            Side.BUY if order_dets[1] == 'B' else Side.SELL,
-            float(order_dets[2]),
-            int(order_dets[3]),
-            user_id=order_dets[0]
+    def make_market(
+        self, 
+        order_limit = 100,
+        qty_start = 500,
+        price_start = 500,
+        qty_deviation = 100,
+        price_deviation = 20
+    ):
+        
+        while(order_limit):
+
+            trader = random.choice(self.traders)
+            direction = random.choice([0, 1])
+            price = price_start + random.randint(-price_deviation, price_deviation)
+            qty = qty_start + random.randint(-qty_deviation, qty_deviation)
+
+            price_start = price
+            
+            self.orderbook.limit_order(direction, qty, price, trader)
+            order_limit -= 1
+
+        print('Market made for currency')
+        print(self.orderbook.render())
+
+    def run_random_simulation(
+        self, 
+        order_limit = 100,
+        qty_start = 500,
+        price_start = 500,
+        qty_deviation = 100,
+        price_deviation = 20
+    ):
+
+        self.make_market(
+            order_limit=order_limit,
+            qty_start=qty_start,
+            qty_deviation=qty_deviation,
+            price_start=price_start,
+            price_deviation=price_deviation
         )
 
-    def add_new_order(self, order_str: str):
+        orders = 0
+        while orders < 500:
 
-        order = self.convert_to_order(order_str=order_str)
-        self.orderbook.process_order(order)
-        self.run_detection()
+            trader = random.choice(self.traders)
+            direction = random.choice([0, 1])
+            price = price_start + random.randint(-price_deviation, price_deviation)
+            qty = qty_start + random.randint(-qty_deviation, qty_deviation)
+            
+            price_start = int((self.orderbook.ask_min + self.orderbook.bid_max) / 2)
+            
+            old_orderbook = deepcopy(self.orderbook)
+            self.orderbook.limit_order(direction, qty, price, trader)
+            new_orderbook = deepcopy(self.orderbook)
+            
+            orders += 1
 
-    def populate_orderbook(self, orders: list):
+            if orders % 100 == 0:
 
-        for order in orders:
-            print(order)
-            self.orderbook.unprocessed_orders.put(order)
+                print(self.orderbook.render())
+                time.sleep(2)
 
-        while not self.orderbook.unprocessed_orders.empty():
-            self.orderbook.process_order(self.orderbook.unprocessed_orders.get())
+            self.run_detections(
+                old_orderbook = old_orderbook,
+                new_orderbook = new_orderbook,
+                order = {
+                    'direction': direction,
+                    'qty': qty,
+                    'price': price,
+                    'trader': trader
+                }
+            )
 
 
 if __name__ == '__main__':
 
-    # Initial orderbook population
-    # Estimated mid price at 12.24
-    orders = [
-        Order(Side.BUY, 12.23, 10, user_id = 'A'),
-        Order(Side.BUY, 12.31, 20, user_id = 'B'),
-        Order(Side.SELL, 13.55, 5, user_id = 'B'),
-        Order(Side.BUY, 12.23, 5, user_id = 'C'),
-        Order(Side.BUY, 12.25, 15, user_id = 'A'),
-        Order(Side.SELL, 13.31, 5, user_id = 'B'),
-        Order(Side.BUY, 12.25, 30, user_id = 'D'),
-        Order(Side.SELL, 13.31, 5, user_id = 'A'),
-        Order(Side.BUY, 12.23, 10, user_id = 'B')
-    ]
-
     sim = Simulator()
 
-    sim.populate_orderbook(orders = orders)
+    # Market params
+    order_limit = 100
+    qty_start = 500
+    price_start = 10
+    qty_deviation = 100
+    price_deviation = 5
 
-    sim.orderbook.show_book()
-    
-    print(sim.orderbook.calculate_fair_price())
-
-    while(True):
-
-        sim.logger.log_info('STOP TO END')
-        sim.logger.log_info('Enter order: ')
-        order_str = input()
-        if order_str == 'STOP':
-            break
-
-        sim.add_new_order(order_str = order_str)
-        sim.orderbook.show_book()
-        
-        print(sim.orderbook.calculate_fair_price())
+    sim.run_random_simulation()
